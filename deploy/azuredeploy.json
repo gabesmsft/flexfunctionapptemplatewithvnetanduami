@@ -60,7 +60,7 @@
     },
     "assignStorageDataRoles": {
       "type": "bool",
-      "defaultValue": false,
+      "defaultValue": true,
       "metadata": {
         "description": "When true, assigns Blob and Queue data roles on the storage account to the UAMI principal ID."
       }
