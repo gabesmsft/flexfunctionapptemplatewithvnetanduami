@@ -170,7 +170,7 @@
     },
     "runtimeVersion": {
       "type": "string",
-      "defaultValue": "8.0",
+      "defaultValue": "10.0",
       "metadata": {
         "description": "Function runtime version for functionAppConfig.runtime.version."
       }
@@ -355,18 +355,6 @@
             {
               "name": "AzureWebJobsStorage__clientId",
               "value": "[reference(variables('uamiResourceId'), '2023-01-31', 'Full').properties.clientId]"
-            },
-            {
-              "name": "AzureWebJobsStorage__blobServiceUri",
-              "value": "[format('https://{0}.blob.{1}', parameters('storageAccountName'), environment().suffixes.storage)]"
-            },
-            {
-              "name": "AzureWebJobsStorage__queueServiceUri",
-              "value": "[format('https://{0}.queue.{1}', parameters('storageAccountName'), environment().suffixes.storage)]"
-            },
-            {
-              "name": "WEBSITE_CONTENTOVERVNET",
-              "value": "1"
             }
           ]
         }
