@@ -67,7 +67,7 @@
     },
     "virtualNetworkName": {
       "type": "string",
-      "defaultValue": "[format('vnet-{0}', uniqueString(resourceGroup().name))]",
+      "defaultValue": "vnet",
       "metadata": {
         "description": "Name of the virtual network created for Function App integration and private endpoints."
       }
@@ -187,9 +187,10 @@
     "serverFarmResourceId": "[resourceId('Microsoft.Web/serverfarms', parameters('functionPlanName'))]",
     "storageAccountResourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
     "uamiResourceId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('uamiName'))]",
-    "virtualNetworkResourceId": "[resourceId('Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]",
-    "integrationSubnetResourceId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('virtualNetworkName'), parameters('integrationSubnetName'))]",
-    "privateEndpointSubnetResourceId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('virtualNetworkName'), parameters('privateEndpointSubnetName'))]",
+    "virtualNetworkNameResolved": "[if(equals(parameters('virtualNetworkName'), 'vnet'), format('vnet-{0}', uniqueString(resourceGroup().name)), parameters('virtualNetworkName'))]",
+    "virtualNetworkResourceId": "[resourceId('Microsoft.Network/virtualNetworks', variables('virtualNetworkNameResolved'))]",
+    "integrationSubnetResourceId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('virtualNetworkNameResolved'), parameters('integrationSubnetName'))]",
+    "privateEndpointSubnetResourceId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('virtualNetworkNameResolved'), parameters('privateEndpointSubnetName'))]",
     "deploymentContainerFullName": "[format('{0}-{1}', parameters('deploymentContainerName'), parameters('deploymentContainerSuffix'))]",
     "deploymentContainerUrl": "[format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('deploymentContainerFullName'))]",
     "blobPrivateEndpointName": "[format('pe-{0}-blob', parameters('storageAccountName'))]",
@@ -209,7 +210,7 @@
     {
       "type": "Microsoft.Network/virtualNetworks",
       "apiVersion": "2023-09-01",
-      "name": "[parameters('virtualNetworkName')]",
+      "name": "[variables('virtualNetworkNameResolved')]",
       "location": "[parameters('location')]",
       "tags": "[parameters('tags')]",
       "properties": {
