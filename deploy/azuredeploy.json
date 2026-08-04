@@ -1,0 +1,696 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for the Function App and private endpoints."
+      }
+    },
+    "functionAppName": {
+      "type": "string",
+      "defaultValue": "[format('func-{0}', uniqueString(resourceGroup().name))]",
+      "metadata": {
+        "description": "Name of the Flex Consumption Function App to create."
+      }
+    },
+    "functionPlanName": {
+      "type": "string",
+      "defaultValue": "[format('aspfc-{0}', uniqueString(resourceGroup().name))]",
+      "metadata": {
+        "description": "Flex Consumption plan name (Microsoft.Web/serverfarms) in the current resource group."
+      }
+    },
+    "createFunctionPlan": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "When true, creates the Flex Consumption plan resource."
+      }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "defaultValue": "[concat('st', uniqueString(resourceGroup().name))]",
+      "metadata": {
+        "description": "Existing storage account used by the Function App host and deployment container in the current resource group."
+      }
+    },
+    "uamiName": {
+      "type": "string",
+      "defaultValue": "[format('uami-{0}', uniqueString(resourceGroup().name))]",
+      "metadata": {
+        "description": "Name of the existing user-assigned managed identity in the current resource group."
+      }
+    },
+    "createUserAssignedIdentity": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "When true, creates the user-assigned managed identity if it does not already exist."
+      }
+    },
+    "createStorageAccount": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "When true, creates the storage account if it does not already exist."
+      }
+    },
+    "assignStorageDataRoles": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "When true, assigns Blob and Queue data roles on the storage account to the UAMI principal ID."
+      }
+    },
+    "virtualNetworkName": {
+      "type": "string",
+      "defaultValue": "[format('vnet-{0}', uniqueString(resourceGroup().name))]",
+      "metadata": {
+        "description": "Name of the virtual network created for Function App integration and private endpoints."
+      }
+    },
+    "virtualNetworkAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.40.0.0/16",
+      "metadata": {
+        "description": "Address space for the virtual network."
+      }
+    },
+    "integrationSubnetName": {
+      "type": "string",
+      "defaultValue": "snet-func-integration",
+      "metadata": {
+        "description": "Subnet name used for Flex Consumption Function App VNet integration."
+      }
+    },
+    "integrationSubnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.40.0.0/26",
+      "metadata": {
+        "description": "Address prefix for the Function App integration subnet."
+      }
+    },
+    "privateEndpointSubnetName": {
+      "type": "string",
+      "defaultValue": "snet-private-endpoints",
+      "metadata": {
+        "description": "Subnet name used for storage private endpoints."
+      }
+    },
+    "privateEndpointSubnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.40.1.0/27",
+      "metadata": {
+        "description": "Address prefix for the private endpoint subnet."
+      }
+    },
+    "createStoragePrivateEndpoints": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "When true, creates private endpoints for blob and queue on the storage account."
+      }
+    },
+    "createPrivateDnsZones": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "When true, creates private DNS zones and virtual network links required by storage private endpoints."
+      }
+    },
+    "deploymentContainerName": {
+      "type": "string",
+      "defaultValue": "app-package",
+      "metadata": {
+        "description": "Base name of the blob container used for Flex one-deploy packages."
+      }
+    },
+    "deploymentContainerSuffix": {
+      "type": "string",
+      "defaultValue": "[uniqueString(resourceGroup().name)]",
+      "metadata": {
+        "description": "Suffix appended to deploymentContainerName."
+      }
+    },
+    "createDeploymentContainer": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "When true, creates the deployment blob container in the storage account. Requires storage account in current deployment scope."
+      }
+    },
+    "maximumInstanceCount": {
+      "type": "int",
+      "defaultValue": 100,
+      "metadata": {
+        "description": "Maximum scale-out instances for Flex Consumption."
+      }
+    },
+    "instanceMemoryMB": {
+      "type": "int",
+      "defaultValue": 512,
+      "allowedValues": [
+        512,
+        2048,
+        4096
+      ],
+      "metadata": {
+        "description": "Per-instance memory size for Flex Consumption."
+      }
+    },
+    "runtimeName": {
+      "type": "string",
+      "defaultValue": "dotnet-isolated",
+      "metadata": {
+        "description": "Function runtime name for functionAppConfig.runtime.name."
+      }
+    },
+    "runtimeVersion": {
+      "type": "string",
+      "defaultValue": "8.0",
+      "metadata": {
+        "description": "Function runtime version for functionAppConfig.runtime.version."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Optional tags for created resources."
+      }
+    }
+  },
+  "variables": {
+    "serverFarmResourceId": "[resourceId('Microsoft.Web/serverfarms', parameters('functionPlanName'))]",
+    "storageAccountResourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+    "uamiResourceId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('uamiName'))]",
+    "virtualNetworkResourceId": "[resourceId('Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]",
+    "integrationSubnetResourceId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('virtualNetworkName'), parameters('integrationSubnetName'))]",
+    "privateEndpointSubnetResourceId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('virtualNetworkName'), parameters('privateEndpointSubnetName'))]",
+    "deploymentContainerFullName": "[format('{0}-{1}', parameters('deploymentContainerName'), parameters('deploymentContainerSuffix'))]",
+    "deploymentContainerUrl": "[format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('deploymentContainerFullName'))]",
+    "blobPrivateEndpointName": "[format('pe-{0}-blob', parameters('storageAccountName'))]",
+    "queuePrivateEndpointName": "[format('pe-{0}-queue', parameters('storageAccountName'))]",
+    "blobPrivateDnsZoneName": "privatelink.blob.core.windows.net",
+    "queuePrivateDnsZoneName": "privatelink.queue.core.windows.net",
+    "blobPrivateDnsZoneResourceId": "[resourceId('Microsoft.Network/privateDnsZones', variables('blobPrivateDnsZoneName'))]",
+    "queuePrivateDnsZoneResourceId": "[resourceId('Microsoft.Network/privateDnsZones', variables('queuePrivateDnsZoneName'))]",
+    "integrationVnetResourceId": "[first(split(variables('integrationSubnetResourceId'), '/subnets/'))]",
+    "privateEndpointVnetResourceId": "[first(split(variables('privateEndpointSubnetResourceId'), '/subnets/'))]",
+    "integrationVnetLinkName": "[format('link-{0}', uniqueString(variables('integrationVnetResourceId')))]",
+    "privateEndpointVnetLinkName": "[format('link-{0}', uniqueString(variables('privateEndpointVnetResourceId')))]",
+    "roleDefStorageBlobDataContributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+    "roleDefStorageQueueDataContributor": "974c5e8b-45b9-4653-ba55-5f855dd0fb88"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-09-01",
+      "name": "[parameters('virtualNetworkName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('virtualNetworkAddressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[parameters('integrationSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('integrationSubnetAddressPrefix')]",
+              "delegations": [
+                {
+                  "name": "flexDelegation",
+                  "properties": {
+                    "serviceName": "Microsoft.App/environments"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "[parameters('privateEndpointSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('privateEndpointSubnetAddressPrefix')]",
+              "privateEndpointNetworkPolicies": "Disabled"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "condition": "[parameters('createUserAssignedIdentity')]",
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[parameters('uamiName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "condition": "[parameters('createStorageAccount')]",
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "kind": "StorageV2",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "supportsHttpsTrafficOnly": true,
+        "publicNetworkAccess": "Disabled",
+        "networkAcls": {
+          "defaultAction": "Deny",
+          "bypass": "None"
+        },
+        "allowBlobPublicAccess": false,
+        "allowSharedKeyAccess": false,
+        "defaultToOAuthAuthentication": true,
+        "minimumTlsVersion": "TLS1_2"
+      }
+    },
+    {
+      "condition": "[parameters('createFunctionPlan')]",
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2024-04-01",
+      "name": "[parameters('functionPlanName')]",
+      "location": "[parameters('location')]",
+      "kind": "functionapp",
+      "sku": {
+        "name": "FC1",
+        "tier": "FlexConsumption"
+      },
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "condition": "[parameters('createDeploymentContainer')]",
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/default/{1}', parameters('storageAccountName'), variables('deploymentContainerFullName'))]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+      ]
+    },
+    {
+      "condition": "[not(parameters('assignStorageDataRoles'))]",
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2024-11-01",
+      "name": "[parameters('functionAppName')]",
+      "location": "[parameters('location')]",
+      "kind": "functionapp,linux",
+      "tags": "[parameters('tags')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[variables('uamiResourceId')]": {}
+        }
+      },
+      "properties": {
+        "serverFarmId": "[variables('serverFarmResourceId')]",
+        "functionAppConfig": {
+          "deployment": {
+            "storage": {
+              "type": "blobContainer",
+              "value": "[variables('deploymentContainerUrl')]",
+              "authentication": {
+                "type": "UserAssignedIdentity",
+                "userAssignedIdentityResourceId": "[variables('uamiResourceId')]",
+                "storageAccountConnectionStringName": null
+              }
+            }
+          },
+          "scaleAndConcurrency": {
+            "maximumInstanceCount": "[parameters('maximumInstanceCount')]",
+            "instanceMemoryMB": "[parameters('instanceMemoryMB')]"
+          },
+          "runtime": {
+            "name": "[parameters('runtimeName')]",
+            "version": "[parameters('runtimeVersion')]"
+          }
+        },
+        "siteConfig": {
+          "vnetRouteAllEnabled": true,
+          "appSettings": [
+            {
+              "name": "AzureWebJobsStorage__accountName",
+              "value": "[parameters('storageAccountName')]"
+            },
+            {
+              "name": "AzureWebJobsStorage__credential",
+              "value": "managedidentity"
+            },
+            {
+              "name": "AzureWebJobsStorage__clientId",
+              "value": "[reference(variables('uamiResourceId'), '2023-01-31', 'Full').properties.clientId]"
+            },
+            {
+              "name": "AzureWebJobsStorage__blobServiceUri",
+              "value": "[format('https://{0}.blob.{1}', parameters('storageAccountName'), environment().suffixes.storage)]"
+            },
+            {
+              "name": "AzureWebJobsStorage__queueServiceUri",
+              "value": "[format('https://{0}.queue.{1}', parameters('storageAccountName'), environment().suffixes.storage)]"
+            },
+            {
+              "name": "WEBSITE_CONTENTOVERVNET",
+              "value": "1"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', parameters('functionPlanName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('uamiName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', variables('deploymentContainerFullName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', variables('blobPrivateEndpointName'), 'default')]",
+        "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', variables('queuePrivateEndpointName'), 'default')]"
+      ]
+    },
+    {
+      "condition": "[parameters('assignStorageDataRoles')]",
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2024-11-01",
+      "name": "[parameters('functionAppName')]",
+      "location": "[parameters('location')]",
+      "kind": "functionapp,linux",
+      "tags": "[parameters('tags')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[variables('uamiResourceId')]": {}
+        }
+      },
+      "properties": {
+        "serverFarmId": "[variables('serverFarmResourceId')]",
+        "functionAppConfig": {
+          "deployment": {
+            "storage": {
+              "type": "blobContainer",
+              "value": "[variables('deploymentContainerUrl')]",
+              "authentication": {
+                "type": "UserAssignedIdentity",
+                "userAssignedIdentityResourceId": "[variables('uamiResourceId')]",
+                "storageAccountConnectionStringName": null
+              }
+            }
+          },
+          "scaleAndConcurrency": {
+            "maximumInstanceCount": "[parameters('maximumInstanceCount')]",
+            "instanceMemoryMB": "[parameters('instanceMemoryMB')]"
+          },
+          "runtime": {
+            "name": "[parameters('runtimeName')]",
+            "version": "[parameters('runtimeVersion')]"
+          }
+        },
+        "siteConfig": {
+          "vnetRouteAllEnabled": true,
+          "appSettings": [
+            {
+              "name": "AzureWebJobsStorage__accountName",
+              "value": "[parameters('storageAccountName')]"
+            },
+            {
+              "name": "AzureWebJobsStorage__credential",
+              "value": "managedidentity"
+            },
+            {
+              "name": "AzureWebJobsStorage__clientId",
+              "value": "[reference(variables('uamiResourceId'), '2023-01-31', 'Full').properties.clientId]"
+            },
+            {
+              "name": "AzureWebJobsStorage__blobServiceUri",
+              "value": "[format('https://{0}.blob.{1}', parameters('storageAccountName'), environment().suffixes.storage)]"
+            },
+            {
+              "name": "AzureWebJobsStorage__queueServiceUri",
+              "value": "[format('https://{0}.queue.{1}', parameters('storageAccountName'), environment().suffixes.storage)]"
+            },
+            {
+              "name": "WEBSITE_CONTENTOVERVNET",
+              "value": "1"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', parameters('functionPlanName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('uamiName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', variables('deploymentContainerFullName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', variables('blobPrivateEndpointName'), 'default')]",
+        "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', variables('queuePrivateEndpointName'), 'default')]",
+        "[extensionResourceId(variables('storageAccountResourceId'), 'Microsoft.Authorization/roleAssignments', guid(variables('storageAccountResourceId'), variables('uamiResourceId'), variables('roleDefStorageBlobDataContributor')))]",
+        "[extensionResourceId(variables('storageAccountResourceId'), 'Microsoft.Authorization/roleAssignments', guid(variables('storageAccountResourceId'), variables('uamiResourceId'), variables('roleDefStorageQueueDataContributor')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/sites/networkConfig",
+      "apiVersion": "2025-03-01",
+      "name": "[format('{0}/virtualNetwork', parameters('functionAppName'))]",
+      "properties": {
+        "subnetResourceId": "[variables('integrationSubnetResourceId')]",
+        "swiftSupported": true
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', parameters('functionAppName'))]",
+        "[variables('virtualNetworkResourceId')]"
+      ]
+    },
+    {
+      "condition": "[and(parameters('createStoragePrivateEndpoints'), parameters('createPrivateDnsZones'))]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2020-06-01",
+      "name": "[variables('blobPrivateDnsZoneName')]",
+      "location": "global",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "condition": "[and(parameters('createStoragePrivateEndpoints'), parameters('createPrivateDnsZones'))]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2020-06-01",
+      "name": "[variables('queuePrivateDnsZoneName')]",
+      "location": "global",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "condition": "[and(parameters('createStoragePrivateEndpoints'), parameters('createPrivateDnsZones'))]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/{1}', variables('blobPrivateDnsZoneName'), variables('integrationVnetLinkName'))]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[variables('integrationVnetResourceId')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('blobPrivateDnsZoneName'))]"
+      ]
+    },
+    {
+      "condition": "[and(parameters('createStoragePrivateEndpoints'), parameters('createPrivateDnsZones'))]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/{1}', variables('queuePrivateDnsZoneName'), variables('integrationVnetLinkName'))]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[variables('integrationVnetResourceId')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('queuePrivateDnsZoneName'))]"
+      ]
+    },
+    {
+      "condition": "[and(parameters('createStoragePrivateEndpoints'), parameters('createPrivateDnsZones'), not(equals(variables('integrationVnetResourceId'), variables('privateEndpointVnetResourceId'))))]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/{1}', variables('blobPrivateDnsZoneName'), variables('privateEndpointVnetLinkName'))]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[variables('privateEndpointVnetResourceId')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('blobPrivateDnsZoneName'))]"
+      ]
+    },
+    {
+      "condition": "[and(parameters('createStoragePrivateEndpoints'), parameters('createPrivateDnsZones'), not(equals(variables('integrationVnetResourceId'), variables('privateEndpointVnetResourceId'))))]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/{1}', variables('queuePrivateDnsZoneName'), variables('privateEndpointVnetLinkName'))]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[variables('privateEndpointVnetResourceId')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('queuePrivateDnsZoneName'))]"
+      ]
+    },
+    {
+      "condition": "[parameters('createStoragePrivateEndpoints')]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('blobPrivateEndpointName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[variables('privateEndpointSubnetResourceId')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "blob",
+            "properties": {
+              "privateLinkServiceId": "[variables('storageAccountResourceId')]",
+              "groupIds": [
+                "blob"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[variables('virtualNetworkResourceId')]",
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+      ]
+    },
+    {
+      "condition": "[parameters('createStoragePrivateEndpoints')]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2023-09-01",
+      "name": "[format('{0}/default', variables('blobPrivateEndpointName'))]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "blob",
+            "properties": {
+              "privateDnsZoneId": "[variables('blobPrivateDnsZoneResourceId')]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateEndpoints', variables('blobPrivateEndpointName'))]",
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('blobPrivateDnsZoneName'))]"
+      ]
+    },
+    {
+      "condition": "[parameters('createStoragePrivateEndpoints')]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('queuePrivateEndpointName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[variables('privateEndpointSubnetResourceId')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "queue",
+            "properties": {
+              "privateLinkServiceId": "[variables('storageAccountResourceId')]",
+              "groupIds": [
+                "queue"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[variables('virtualNetworkResourceId')]",
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+      ]
+    },
+    {
+      "condition": "[parameters('createStoragePrivateEndpoints')]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2023-09-01",
+      "name": "[format('{0}/default', variables('queuePrivateEndpointName'))]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "queue",
+            "properties": {
+              "privateDnsZoneId": "[variables('queuePrivateDnsZoneResourceId')]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateEndpoints', variables('queuePrivateEndpointName'))]",
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('queuePrivateDnsZoneName'))]"
+      ]
+    },
+    {
+      "condition": "[parameters('assignStorageDataRoles')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(variables('storageAccountResourceId'), variables('uamiResourceId'), variables('roleDefStorageBlobDataContributor'))]",
+      "scope": "[variables('storageAccountResourceId')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('roleDefStorageBlobDataContributor'))]",
+        "principalId": "[reference(variables('uamiResourceId'), '2023-01-31', 'Full').properties.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('uamiName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints', variables('blobPrivateEndpointName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints', variables('queuePrivateEndpointName'))]"
+      ]
+    },
+    {
+      "condition": "[parameters('assignStorageDataRoles')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(variables('storageAccountResourceId'), variables('uamiResourceId'), variables('roleDefStorageQueueDataContributor'))]",
+      "scope": "[variables('storageAccountResourceId')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('roleDefStorageQueueDataContributor'))]",
+        "principalId": "[reference(variables('uamiResourceId'), '2023-01-31', 'Full').properties.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('uamiName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints', variables('blobPrivateEndpointName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints', variables('queuePrivateEndpointName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "functionAppId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Web/sites', parameters('functionAppName'))]"
+    },
+    "deploymentContainerUrl": {
+      "type": "string",
+      "value": "[variables('deploymentContainerUrl')]"
+    }
+  }
+}
