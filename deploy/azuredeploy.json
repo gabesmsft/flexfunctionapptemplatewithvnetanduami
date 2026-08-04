@@ -137,7 +137,7 @@
     },
     "createDeploymentContainer": {
       "type": "bool",
-      "defaultValue": false,
+      "defaultValue": true,
       "metadata": {
         "description": "When true, creates the deployment blob container in the storage account. Requires storage account in current deployment scope."
       }
