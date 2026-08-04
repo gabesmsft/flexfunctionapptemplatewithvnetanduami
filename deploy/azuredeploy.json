@@ -406,7 +406,6 @@
           }
         },
         "siteConfig": {
-          "vnetRouteAllEnabled": true,
           "appSettings": [
             {
               "name": "AzureWebJobsStorage__accountName",
